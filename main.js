@@ -153,8 +153,16 @@ const playerState = {
     shieldCount: 0,
     score: 0,
     scoreMultiplier: 1.0,
+    speedMultiplier: 1.0,
+    nextSpeedBoostScore: 5000,
     isAlive: true,
+    isPaused: false,
+    isJumping: false,
+    yVelocity: 0,
 };
+
+const JUMP_POWER = 0.3;
+const GRAVITY = -0.015;
 
 const scoreElement = document.getElementById('score');
 const shieldElement = document.getElementById('shield-count');
@@ -163,17 +171,31 @@ const startButton = document.getElementById('start-button');
 const gameOverScreen = document.getElementById('game-over-screen');
 const finalScoreElement = document.getElementById('final-score');
 const restartButton = document.getElementById('restart-button');
+const pauseButton = document.getElementById('pause-button');
+const leftButton = document.getElementById('left-button');
+const rightButton = document.getElementById('right-button');
+const jumpButton = document.getElementById('jump-button');
+
+let touchStartX = 0;
+let touchEndX = 0;
+let touchStartY = 0;
+let touchEndY = 0;
 
 function handleKeyPress(event) {
     if (playerState.isSwitching || !playerState.isAlive) return;
 
-    let targetLaneIndex = playerState.currentLaneIndex;
     if (event.key === 'a' || event.key === 'ArrowLeft') {
-        targetLaneIndex = Math.max(0, playerState.currentLaneIndex - 1);
+        moveLeft();
     } else if (event.key === 'd' || event.key === 'ArrowRight') {
-        targetLaneIndex = Math.min(2, playerState.currentLaneIndex + 1);
+        moveRight();
+    } else if (event.key === ' ' || event.key === 'w' || event.key === 'ArrowUp') {
+        jump();
     }
+}
 
+function moveLeft() {
+    if (playerState.isSwitching || !playerState.isAlive) return;
+    let targetLaneIndex = Math.max(0, playerState.currentLaneIndex - 1);
     if (targetLaneIndex !== playerState.currentLaneIndex) {
         sfx.switch();
         playerState.currentLaneIndex = targetLaneIndex;
@@ -182,9 +204,76 @@ function handleKeyPress(event) {
     }
 }
 
+function moveRight() {
+    if (playerState.isSwitching || !playerState.isAlive) return;
+    let targetLaneIndex = Math.min(2, playerState.currentLaneIndex + 1);
+    if (targetLaneIndex !== playerState.currentLaneIndex) {
+        sfx.switch();
+        playerState.currentLaneIndex = targetLaneIndex;
+        playerState.targetX = lanes[targetLaneIndex];
+        playerState.isSwitching = true;
+    }
+}
+
+function jump() {
+    if (!playerState.isJumping && playerState.isAlive) {
+        playerState.isJumping = true;
+        playerState.yVelocity = JUMP_POWER;
+    }
+}
+
+function handleTouchStart(event) {
+    touchStartX = event.changedTouches[0].screenX;
+    touchStartY = event.changedTouches[0].screenY;
+}
+
+function handleTouchEnd(event) {
+    touchEndX = event.changedTouches[0].screenX;
+    touchEndY = event.changedTouches[0].screenY;
+    handleSwipe();
+}
+
+function handleSwipe() {
+    const swipeDistanceX = touchEndX - touchStartX;
+    const swipeDistanceY = touchEndY - touchStartY;
+
+    if (Math.abs(swipeDistanceY) > Math.abs(swipeDistanceX)) {
+        // Vertical swipe
+        if (swipeDistanceY < -50) {
+            jump();
+        }
+    } else {
+        // Horizontal swipe
+        if (swipeDistanceX < -50) {
+            moveLeft();
+        } else if (swipeDistanceX > 50) {
+            moveRight();
+        }
+    }
+}
+
+function togglePause() {
+    playerState.isPaused = !playerState.isPaused;
+    if (playerState.isPaused) {
+        Tone.Transport.pause();
+        pauseButton.textContent = 'Play';
+    } else {
+        Tone.Transport.start();
+        pauseButton.textContent = 'Pause';
+        animate(); // Resume animation
+    }
+}
+
 document.addEventListener('keydown', handleKeyPress);
+renderer.domElement.addEventListener('touchstart', handleTouchStart, false);
+renderer.domElement.addEventListener('touchend', handleTouchEnd, false);
+
 startButton.addEventListener('click', startGame);
 restartButton.addEventListener('click', restartGame);
+pauseButton.addEventListener('click', togglePause);
+leftButton.addEventListener('touchstart', moveLeft, false);
+rightButton.addEventListener('touchstart', moveRight, false);
+jumpButton.addEventListener('touchstart', jump, false);
 
 // =========== BUILDING GENERATION ===========
 const BUILDING_POOL_SIZE = 30;
@@ -245,6 +334,20 @@ energyDrink.position.y = 1;
 energyDrink.visible = false;
 scene.add(energyDrink);
 
+const speedBoost2xGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1.5, 32);
+const speedBoost2xMaterial = new THREE.MeshStandardMaterial({ color: 0xFFA500 }); // Orange
+const speedBoost2x = new THREE.Mesh(speedBoost2xGeometry, speedBoost2xMaterial);
+speedBoost2x.position.y = 1;
+speedBoost2x.visible = false;
+scene.add(speedBoost2x);
+
+const speedBoost5xGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1.5, 32);
+const speedBoost5xMaterial = new THREE.MeshStandardMaterial({ color: 0x8A2BE2 }); // BlueViolet
+const speedBoost5x = new THREE.Mesh(speedBoost5xGeometry, speedBoost5xMaterial);
+speedBoost5x.position.y = 1;
+speedBoost5x.visible = false;
+scene.add(speedBoost5x);
+
 function spawnShawarma() {
     if (!shawarma.visible) {
         shawarma.position.x = lanes[THREE.MathUtils.randInt(0, 2)];
@@ -266,6 +369,23 @@ function spawnEnergyDrink() {
         energyDrink.position.x = lanes[THREE.MathUtils.randInt(0, 2)];
         energyDrink.position.z = OBSTACLE_SPAWN_Z - 75;
         energyDrink.visible = true;
+    }
+}
+
+function spawnSpeedBoost() {
+    const boostType = Math.random();
+    if (boostType < 0.7) { // 70% chance for 2x
+        if (!speedBoost2x.visible) {
+            speedBoost2x.position.x = lanes[THREE.MathUtils.randInt(0, 2)];
+            speedBoost2x.position.z = OBSTACLE_SPAWN_Z - 120;
+            speedBoost2x.visible = true;
+        }
+    } else { // 30% chance for 5x
+        if (!speedBoost5x.visible) {
+            speedBoost5x.position.x = lanes[THREE.MathUtils.randInt(0, 2)];
+            speedBoost5x.position.z = OBSTACLE_SPAWN_Z - 120;
+            speedBoost5x.visible = true;
+        }
     }
 }
 
@@ -336,6 +456,9 @@ function spawnInitialItems() {
 // =========== GAME START/OVER & RESTART ===========
 function startGame() {
     Tone.start();
+    if (Tone.context.state !== 'running') {
+        Tone.context.resume();
+    }
     Tone.Transport.start();
     startScreen.style.display = 'none';
     spawnInitialItems();
@@ -443,15 +566,43 @@ function checkCollisions() {
             }, SCORE_MULTIPLIER_DURATION);
         }
     }
+
+    if (speedBoost2x.visible) {
+        powerupBox.setFromObject(speedBoost2x);
+        if (playerBox.intersectsBox(powerupBox)) {
+            sfx.powerup();
+            speedBoost2x.visible = false;
+            playerState.speedMultiplier = 2.0;
+            setTimeout(() => {
+                playerState.speedMultiplier = 1.0;
+            }, 10000);
+        }
+    }
+
+    if (speedBoost5x.visible) {
+        powerupBox.setFromObject(speedBoost5x);
+        if (playerBox.intersectsBox(powerupBox)) {
+            sfx.powerup();
+            speedBoost5x.visible = false;
+            playerState.speedMultiplier = 5.0;
+            setTimeout(() => {
+                playerState.speedMultiplier = 1.0;
+            }, 10000);
+        }
+    }
 }
 
 // =========== GAME LOOP ===========
 function animate() {
-    if (!playerState.isAlive) {
+    if (!playerState.isAlive || playerState.isPaused) {
         return;
     }
 
     requestAnimationFrame(animate);
+
+    // Calculate speed
+    const autoSpeed = BASE_SPEED + (playerState.score / 50000);
+    gameSpeed = autoSpeed * playerState.speedMultiplier;
 
     // Update Score
     playerState.score += playerState.scoreMultiplier;
@@ -531,9 +682,41 @@ function animate() {
         }
     }
 
+    if (playerState.score > playerState.nextSpeedBoostScore) {
+        spawnSpeedBoost();
+        playerState.nextSpeedBoostScore += 5000;
+    }
+
+    if (speedBoost2x.visible) {
+        speedBoost2x.position.z += gameSpeed;
+        speedBoost2x.rotation.y += 0.05;
+        if (speedBoost2x.position.z > camera.position.z) {
+            speedBoost2x.visible = false;
+        }
+    }
+
+    if (speedBoost5x.visible) {
+        speedBoost5x.position.z += gameSpeed;
+        speedBoost5x.rotation.y += 0.05;
+        if (speedBoost5x.position.z > camera.position.z) {
+            speedBoost5x.visible = false;
+        }
+    }
+
     // Animate Player
     const lerpFactor = 0.1;
     player.position.x = THREE.MathUtils.lerp(player.position.x, playerState.targetX, lerpFactor);
+
+    // Handle Jump
+    if (playerState.isJumping) {
+        player.position.y += playerState.yVelocity;
+        playerState.yVelocity += GRAVITY;
+        if (player.position.y <= 0.5) {
+            player.position.y = 0.5;
+            playerState.isJumping = false;
+            playerState.yVelocity = 0;
+        }
+    }
 
     // Animate player's run
     const runSpeed = 15; // Adjust for faster or slower running animation
