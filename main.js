@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import * as Tone from 'tone';
 
 // =========== CONSTANTS ===========
 const BASE_SPEED = 0.15;
