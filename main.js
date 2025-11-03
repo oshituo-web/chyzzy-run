@@ -160,12 +160,14 @@ const playerState = {
     isPaused: false,
     isJumping: false,
     isFalling: false,
+    isGliding: false,
+    isOnObstacle: false,
     yVelocity: 0,
 };
 
-const JUMP_POWER = 0.3;
-const HIGH_JUMP_POWER = 0.45;
-const GRAVITY = -0.015;
+const JUMP_POWER = 0.4;
+const HIGH_JUMP_POWER = 0.55;
+const GRAVITY = -0.02;
 
 const scoreElement = document.getElementById('score');
 const shieldElement = document.getElementById('shield-count');
@@ -227,7 +229,11 @@ function highJump() {
     if (!playerState.isJumping && playerState.isAlive) {
         sfx.jump();
         playerState.isJumping = true;
+        playerState.isGliding = true;
         playerState.yVelocity = HIGH_JUMP_POWER;
+        setTimeout(() => {
+            playerState.isGliding = false;
+        }, 2000); // 2 seconds of gliding
     }
 }
 
@@ -406,7 +412,7 @@ const OBSTACLE_SPAWN_Z = -150;
 function createDanfo() {
     const danfo = new THREE.Group();
     const body = new THREE.Mesh(
-        new THREE.BoxGeometry(4, 3, 8),
+        new THREE.BoxGeometry(3, 3, 8), // Reduced width from 4 to 3
         new THREE.MeshStandardMaterial({ color: 0xFFC300 })
     );
     body.position.y = 1.5;
@@ -417,7 +423,7 @@ function createDanfo() {
 
     const frontWheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
     frontWheel.rotation.z = Math.PI / 2;
-    frontWheel.position.set(-2, 0.5, 2.5);
+    frontWheel.position.set(-1.5, 0.5, 2.5);
     danfo.add(frontWheel);
 
     const rearWheel = frontWheel.clone();
@@ -425,12 +431,14 @@ function createDanfo() {
     danfo.add(rearWheel);
 
     const rightFrontWheel = frontWheel.clone();
-    rightFrontWheel.position.x = 2;
+    rightFrontWheel.position.x = 1.5;
     danfo.add(rightFrontWheel);
 
     const rightRearWheel = rearWheel.clone();
-    rightRearWheel.position.x = 2;
+    rightRearWheel.position.x = 1.5;
     danfo.add(rightRearWheel);
+
+    danfo.userData.z_speed = 0;
 
     return danfo;
 }
@@ -462,10 +470,17 @@ function spawnObstacle() {
     obstacle1.position.x = lanes[lane1];
     obstacle1.position.z = OBSTACLE_SPAWN_Z;
     obstacle1.visible = true;
+    obstacle1.userData.z_speed = 0;
 
     obstacle2.position.x = lanes[lane2];
     obstacle2.position.z = OBSTACLE_SPAWN_Z;
     obstacle2.visible = true;
+    // Make one of the two obstacles a moving one sometimes
+    if (Math.random() > 0.5) {
+        obstacle2.userData.z_speed = Math.random() * 0.1 - 0.05;
+    } else {
+        obstacle2.userData.z_speed = 0;
+    }
 }
 
 // Spawn initial items
@@ -542,14 +557,22 @@ const powerupBox = new THREE.Box3();
 function checkCollisions() {
     if (!playerState.isAlive) return;
 
-    playerBox.setFromObject(player);
+    const playerBox = new THREE.Box3().setFromObject(player);
 
     // Obstacle Collision
     obstacles.forEach(obstacle => {
         if (obstacle.visible) {
-            obstacleBox.setFromObject(obstacle);
+            const obstacleBox = new THREE.Box3().setFromObject(obstacle);
             if (playerBox.intersectsBox(obstacleBox)) {
-                if (playerState.isInvincible) {
+                const isLanding = playerState.yVelocity < 0 && player.position.y > obstacle.position.y;
+
+                if (isLanding) {
+                    player.position.y = obstacle.position.y + 3.5; // Adjust based on model heights
+                    playerState.isJumping = false;
+                    playerState.isGliding = false;
+                    playerState.yVelocity = 0;
+                    playerState.isOnObstacle = obstacle; // Store reference to the obstacle
+                } else if (playerState.isInvincible) {
                     obstacle.visible = false; // Just pass through
                 } else if (playerState.shieldCount > 0) {
                     sfx.collision();
@@ -692,7 +715,7 @@ function animate() {
     let shouldSpawnObstacle = true;
     obstacles.forEach(obstacle => {
         if (obstacle.visible) {
-            obstacle.position.z += gameSpeed;
+            obstacle.position.z += gameSpeed + obstacle.userData.z_speed;
             if (obstacle.position.z > camera.position.z) {
                 obstacle.visible = false;
             }
@@ -768,10 +791,24 @@ function animate() {
     const lerpFactor = 0.1;
     player.position.x = THREE.MathUtils.lerp(player.position.x, playerState.targetX, lerpFactor);
 
+    // Handle running on obstacle
+    if (playerState.isOnObstacle) {
+        const obstacle = playerState.isOnObstacle;
+        const obstacleHalfLength = obstacle.children[0].geometry.parameters.depth / 2;
+        if (player.position.z > obstacle.position.z + obstacleHalfLength || player.position.z < obstacle.position.z - obstacleHalfLength) {
+            playerState.isOnObstacle = false;
+            playerState.isJumping = true; // Start falling
+        }
+    }
+
     // Handle Jump
     if (playerState.isJumping) {
         player.position.y += playerState.yVelocity;
-        playerState.yVelocity += GRAVITY;
+        if (playerState.isGliding) {
+            playerState.yVelocity += GRAVITY / 4; // Reduced gravity while gliding
+        } else {
+            playerState.yVelocity += GRAVITY;
+        }
 
         // Leg tuck animation
         const tuck = 1 - (player.position.y - 0.5) / (JUMP_POWER / -GRAVITY);
@@ -781,6 +818,7 @@ function animate() {
         if (player.position.y <= 0.5) {
             player.position.y = 0.5;
             playerState.isJumping = false;
+            playerState.isGliding = false;
             playerState.yVelocity = 0;
             player.children[4].scale.y = 1;
             player.children[5].scale.y = 1;
