@@ -3,7 +3,7 @@ import * as THREE from 'three';
 // =========== CONSTANTS ===========
 const BASE_SPEED = 0.15;
 const ROAD_LENGTH = 200;
-const INVINCIBILITY_DURATION = 3000; // 3 seconds
+const INVINCIBILITY_DURATION = 1500; // 1.5 seconds
 const SCORE_MULTIPLIER_DURATION = 10000; // 10 seconds
 
 // =========== SCENE SETUP ===========
@@ -162,9 +162,13 @@ const playerState = {
     isFalling: false,
     isGliding: false,
     isOnObstacle: false,
+    isSliding: false,
     yVelocity: 0,
     level: 1,
     lastLevelUpTime: 0,
+    currentRoadIndex: 0,
+    nextJunctionScore: 10000,
+    atJunction: false,
 };
 
 const JUMP_POWER = 0.4;
@@ -181,6 +185,10 @@ const restartButton = document.getElementById('restart-button');
 const pauseButton = document.getElementById('pause-button');
 const highScoreElement = document.getElementById('high-score');
 const levelElement = document.getElementById('level');
+const powerupNotificationElement = document.getElementById('powerup-notification');
+const roadNameElement = document.getElementById('road-name');
+
+const roadNames = ["Third Mainland Bridge", "Lekki-Epe Expressway", "Ikorodu Road", "Agege Motor Road", "Ozumba Mbadiwe Avenue"];
 
 let touchStartX = 0;
 let touchStartY = 0;
@@ -195,11 +203,16 @@ function handleKeyPress(event) {
         moveRight();
     } else if (event.key === ' ' || event.key === 'w' || event.key === 'ArrowUp') {
         jump();
+    } else if (event.key === 's' || event.key === 'ArrowDown') {
+        slide();
     }
 }
 
 function moveLeft() {
     if (playerState.isSwitching || !playerState.isAlive) return;
+    if (playerState.atJunction) {
+        switchRoad();
+    }
     let targetLaneIndex = Math.max(0, playerState.currentLaneIndex - 1);
     if (targetLaneIndex !== playerState.currentLaneIndex) {
         sfx.switch();
@@ -211,6 +224,9 @@ function moveLeft() {
 
 function moveRight() {
     if (playerState.isSwitching || !playerState.isAlive) return;
+    if (playerState.atJunction) {
+        switchRoad();
+    }
     let targetLaneIndex = Math.min(2, playerState.currentLaneIndex + 1);
     if (targetLaneIndex !== playerState.currentLaneIndex) {
         sfx.switch();
@@ -240,6 +256,15 @@ function highJump() {
     }
 }
 
+function slide() {
+    if (!playerState.isJumping && !playerState.isSliding && playerState.isAlive) {
+        playerState.isSliding = true;
+        setTimeout(() => {
+            playerState.isSliding = false;
+        }, 1000); // 1 second of sliding
+    }
+}
+
 function handleTouchStart(event) {
     touchStartX = event.changedTouches[0].screenX;
     touchStartY = event.changedTouches[0].screenY;
@@ -264,7 +289,12 @@ function handleTouchEnd(event) {
             jump();
         }
         lastTap = currentTime;
-    } else if (Math.abs(swipeDistanceX) > Math.abs(swipeDistanceY)) {
+    } else if (Math.abs(swipeDistanceY) > Math.abs(swipeDistanceX)) {
+        // Vertical swipe
+        if (swipeDistanceY > 50) {
+            slide();
+        }
+    } else {
         // Horizontal swipe
         if (swipeDistanceX < -50) {
             moveLeft();
@@ -302,12 +332,19 @@ const BUILDING_MIN_HEIGHT = 10;
 const BUILDING_MAX_HEIGHT = 50;
 const BUILDING_SPACING = 5;
 
-const buildingColors = [0xFFC300, 0xFF5733, 0xC70039, 0x900C3F, 0x581845];
+const buildingColors = [
+    [0xFFC300, 0xFF5733, 0xC70039, 0x900C3F, 0x581845], // Theme 1
+    [0x1E8449, 0x2ECC71, 0x27AE60, 0x229954, 0x1D8348], // Theme 2 (Greens)
+    [0x2874A6, 0x3498DB, 0x5DADE2, 0x85C1E9, 0xAED6F1], // Theme 3 (Blues)
+    [0x6C3483, 0x8E44AD, 0xA569BD, 0xBB8FCE, 0xD7BDE2], // Theme 4 (Purples)
+    [0xB7950B, 0xD4AC0D, 0F1C40F, 0F39C12, 0xCA6F1E]  // Theme 5 (Browns/Oranges)
+];
+let currentBuildingColors = buildingColors[0];
 const buildingGeometry = new THREE.BoxGeometry(BUILDING_WIDTH, 1, BUILDING_DEPTH);
 
 function createBuilding(side, z) {
     const height = THREE.MathUtils.randInt(BUILDING_MIN_HEIGHT, BUILDING_MAX_HEIGHT);
-    const color = buildingColors[THREE.MathUtils.randInt(0, buildingColors.length - 1)];
+    const color = currentBuildingColors[THREE.MathUtils.randInt(0, currentBuildingColors.length - 1)];
     const material = new THREE.MeshStandardMaterial({ color });
 
     const building = new THREE.Mesh(buildingGeometry, material);
@@ -330,6 +367,65 @@ for (let i = 0; i < BUILDING_POOL_SIZE; i++) {
 }
 
 const allBuildings = [...leftBuildings, ...rightBuildings];
+
+// =========== JUNCTION GENERATION ===========
+const junctions = [];
+
+function createArrow() {
+    const arrow = new THREE.Group();
+    const head = new THREE.Mesh(
+        new THREE.ConeGeometry(2, 4, 4),
+        new THREE.MeshStandardMaterial({ color: 0x00FF00 })
+    );
+    head.rotation.z = Math.PI / 2;
+    arrow.add(head);
+
+    const shaft = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 1, 1),
+        new THREE.MeshStandardMaterial({ color: 0x00FF00 })
+    );
+    shaft.position.x = -3;
+    arrow.add(shaft);
+
+    arrow.visible = false;
+    scene.add(arrow);
+    return arrow;
+}
+
+for (let i = 0; i < 2; i++) { // Only need 2 arrows for a junction
+    junctions.push(createArrow());
+}
+
+function spawnJunction() {
+    playerState.atJunction = true;
+    const arrowLeft = junctions[0];
+    const arrowRight = junctions[1];
+
+    arrowLeft.position.set(-LANE_WIDTH - 5, 3, OBSTACLE_SPAWN_Z + 50);
+    arrowLeft.rotation.y = 0;
+    arrowLeft.visible = true;
+
+    arrowRight.position.set(LANE_WIDTH + 5, 3, OBSTACLE_SPAWN_Z + 50);
+    arrowRight.rotation.y = Math.PI;
+    arrowRight.visible = true;
+
+    playerState.nextJunctionScore += 10000; // Set score for next junction
+}
+
+function switchRoad() {
+    playerState.atJunction = false;
+    junctions.forEach(j => j.visible = false);
+
+    playerState.currentRoadIndex = (playerState.currentRoadIndex + 1) % roadNames.length;
+    roadNameElement.textContent = roadNames[playerState.currentRoadIndex];
+    currentBuildingColors = buildingColors[playerState.currentRoadIndex];
+
+    // Refresh building colors
+    allBuildings.forEach(building => {
+        const color = currentBuildingColors[THREE.MathUtils.randInt(0, currentBuildingColors.length - 1)];
+        building.material.color.set(color);
+    });
+}
 
 // =========== POWER-UP GENERATION ===========
 const shawarmaGeometry = new THREE.TorusGeometry(0.8, 0.3, 16, 100);
@@ -442,11 +538,48 @@ function createDanfo() {
     danfo.add(rightRearWheel);
 
     danfo.userData.z_speed = 0;
+    danfo.userData.type = 'danfo';
 
     return danfo;
 }
 
+function createTruck() {
+    const truck = new THREE.Group();
+    const chassis = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 4, 12),
+        new THREE.MeshStandardMaterial({ color: 0xAAAAAA })
+    );
+    chassis.position.y = 3;
+    truck.add(chassis);
+
+    const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+    const wheelGeometry = new THREE.CylinderGeometry(0.8, 0.8, 1, 32);
+
+    const frontWheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+    frontWheel.rotation.z = Math.PI / 2;
+    frontWheel.position.set(-2.5, 1, 4);
+    truck.add(frontWheel);
+
+    const rearWheel = frontWheel.clone();
+    rearWheel.position.z = -4;
+    truck.add(rearWheel);
+
+    const rightFrontWheel = frontWheel.clone();
+    rightFrontWheel.position.x = 2.5;
+    truck.add(rightFrontWheel);
+
+    const rightRearWheel = rearWheel.clone();
+    rightRearWheel.position.x = 2.5;
+    truck.add(rightRearWheel);
+
+    truck.userData.z_speed = 0;
+    truck.userData.type = 'truck';
+
+    return truck;
+}
+
 const obstacles = [];
+const trucks = [];
 
 for (let i = 0; i < OBSTACLE_POOL_SIZE; i++) {
     const obstacle = createDanfo();
@@ -457,7 +590,28 @@ for (let i = 0; i < OBSTACLE_POOL_SIZE; i++) {
     obstacles.push(obstacle);
 }
 
+for (let i = 0; i < 10; i++) {
+    const truck = createTruck();
+    truck.position.y = 1;
+    truck.position.z = OBSTACLE_SPAWN_Z;
+    truck.visible = false;
+    scene.add(truck);
+    trucks.push(truck);
+}
+
 function spawnObstacle() {
+    // Spawn a truck on level 2 and above
+    if (playerState.level > 1 && Math.random() < 0.2) {
+        const inactiveTrucks = trucks.filter(t => !t.visible);
+        if (inactiveTrucks.length > 0) {
+            const truck = inactiveTrucks[0];
+            truck.position.x = lanes[THREE.MathUtils.randInt(0, 2)];
+            truck.position.z = OBSTACLE_SPAWN_Z;
+            truck.visible = true;
+            return; // Spawn a truck and skip spawning other obstacles this round
+        }
+    }
+
     const inactiveObstacles = obstacles.filter(o => !o.visible);
     const obstacleCount = playerState.level === 1 ? 1 : 2;
 
@@ -528,6 +682,7 @@ function startGame() {
     startScreen.style.display = 'none';
     highScoreElement.textContent = `High Score: ${getHighScore()}`;
     playerState.lastLevelUpTime = Date.now();
+    roadNameElement.textContent = roadNames[playerState.currentRoadIndex];
     spawnInitialItems();
     animate();
 }
@@ -547,6 +702,10 @@ function restartGame() {
     playerState.level = 1;
     playerState.lastLevelUpTime = Date.now();
     levelElement.textContent = `Level: 1`;
+    playerState.currentRoadIndex = 0;
+    roadNameElement.textContent = roadNames[playerState.currentRoadIndex];
+    playerState.nextJunctionScore = 10000;
+    playerState.atJunction = false;
     playerState.shieldCount = 0;
     playerState.scoreMultiplier = 1.0;
     playerState.currentLaneIndex = 1;
@@ -573,16 +732,43 @@ const playerBox = new THREE.Box3();
 const obstacleBox = new THREE.Box3();
 const powerupBox = new THREE.Box3();
 
+function startBlinking(duration) {
+    playerState.isInvincible = true;
+    const blinkInterval = setInterval(() => {
+        player.visible = !player.visible;
+    }, 100);
+
+    setTimeout(() => {
+        clearInterval(blinkInterval);
+        player.visible = true;
+        playerState.isInvincible = false;
+    }, duration);
+}
+
+function showPowerupNotification(name) {
+    powerupNotificationElement.textContent = name;
+    powerupNotificationElement.style.opacity = 1;
+    setTimeout(() => {
+        powerupNotificationElement.style.opacity = 0;
+    }, 1000);
+}
+
 function checkCollisions() {
     if (!playerState.isAlive) return;
 
     const playerBox = new THREE.Box3().setFromObject(player);
+    const allObstacles = [...obstacles, ...trucks];
 
     // Obstacle Collision
-    obstacles.forEach(obstacle => {
+    allObstacles.forEach(obstacle => {
         if (obstacle.visible) {
             const obstacleBox = new THREE.Box3().setFromObject(obstacle);
             if (playerBox.intersectsBox(obstacleBox)) {
+                // If it's a truck and player is sliding, ignore collision
+                if (obstacle.userData.type === 'truck' && playerState.isSliding) {
+                    return; // Ignore collision
+                }
+
                 const isLanding = playerState.yVelocity < 0 && player.position.y > obstacle.position.y;
 
                 if (isLanding) {
@@ -598,15 +784,7 @@ function checkCollisions() {
                     playerState.shieldCount--;
                     shieldElement.textContent = `Shawarma: ${playerState.shieldCount}`;
                     obstacle.visible = false; // Consume shield and ignore obstacle
-
-                    // Brief invincibility after shield use
-                    playerState.isInvincible = true;
-                    const originalColor = player.children[1].material.color.getHex();
-                    player.children[1].material.color.set(0x0000FF);
-                    setTimeout(() => {
-                        playerState.isInvincible = false;
-                        player.children[1].material.color.set(originalColor);
-                    }, 1000); // 1 second of invincibility
+                    startBlinking(1000); // 1 second of blinking invincibility
                 } else {
                     gameOver();
                 }
@@ -622,6 +800,7 @@ function checkCollisions() {
             playerState.shieldCount++;
             shieldElement.textContent = `Shawarma: ${playerState.shieldCount}`;
             shawarma.visible = false;
+            showPowerupNotification('Shawarma Shield!');
         }
     }
 
@@ -630,14 +809,12 @@ function checkCollisions() {
         if (playerBox.intersectsBox(powerupBox)) {
             sfx.powerup();
             sachetWater.visible = false;
-            playerState.isInvincible = true;
             gameSpeed = BASE_SPEED * 2; // Speed burst
-            playerMaterial.color.set(0x0000FF); // Indicate invincibility
+            startBlinking(INVINCIBILITY_DURATION);
+            showPowerupNotification('Sachet Water!');
 
             setTimeout(() => {
-                playerState.isInvincible = false;
                 gameSpeed = BASE_SPEED;
-                playerMaterial.color.set(0xFF0000); // Back to normal
             }, INVINCIBILITY_DURATION);
         }
     }
@@ -648,6 +825,7 @@ function checkCollisions() {
             sfx.powerup();
             energyDrink.visible = false;
             playerState.scoreMultiplier = 2.0;
+            showPowerupNotification('Energy Drink! 2x Score!');
 
             setTimeout(() => {
                 playerState.scoreMultiplier = 1.0;
@@ -661,6 +839,7 @@ function checkCollisions() {
             sfx.powerup();
             speedBoost2x.visible = false;
             playerState.speedMultiplier = 2.0;
+            showPowerupNotification('2x Speed Boost!');
             setTimeout(() => {
                 playerState.speedMultiplier = 1.0;
             }, 10000);
@@ -673,6 +852,7 @@ function checkCollisions() {
             sfx.powerup();
             speedBoost5x.visible = false;
             playerState.speedMultiplier = 5.0;
+            showPowerupNotification('5x Speed Boost!');
             setTimeout(() => {
                 playerState.speedMultiplier = 1.0;
             }, 10000);
@@ -740,7 +920,8 @@ function animate() {
 
     // Animate Obstacles
     let shouldSpawnObstacle = true;
-    obstacles.forEach(obstacle => {
+    const allObstacles = [...obstacles, ...trucks];
+    allObstacles.forEach(obstacle => {
         if (obstacle.visible) {
             obstacle.position.z += gameSpeed + obstacle.userData.z_speed;
             if (obstacle.position.z > camera.position.z) {
@@ -756,6 +937,21 @@ function animate() {
     if (shouldSpawnObstacle) {
         spawnObstacle();
     }
+
+    // Animate Junctions
+    if (playerState.score > playerState.nextJunctionScore && !playerState.atJunction) {
+        spawnJunction();
+    }
+
+    junctions.forEach(junction => {
+        if (junction.visible) {
+            junction.position.z += gameSpeed;
+            if (junction.position.z > camera.position.z) {
+                junction.visible = false;
+                playerState.atJunction = false; // Missed the junction
+            }
+        }
+    });
 
     // Animate Power-ups
     if (shawarma.visible) {
@@ -818,6 +1014,15 @@ function animate() {
     // Animate Player
     const lerpFactor = 0.1;
     player.position.x = THREE.MathUtils.lerp(player.position.x, playerState.targetX, lerpFactor);
+
+    // Handle Sliding Animation
+    if (playerState.isSliding) {
+        player.scale.y = 0.5;
+        player.children[1].rotation.x = Math.PI / 2;
+    } else {
+        player.scale.y = 1;
+        player.children[1].rotation.x = 0;
+    }
 
     // Handle running on obstacle
     if (playerState.isOnObstacle) {
