@@ -163,6 +163,8 @@ const playerState = {
     isGliding: false,
     isOnObstacle: false,
     yVelocity: 0,
+    level: 1,
+    lastLevelUpTime: 0,
 };
 
 const JUMP_POWER = 0.4;
@@ -178,6 +180,7 @@ const finalScoreElement = document.getElementById('final-score');
 const restartButton = document.getElementById('restart-button');
 const pauseButton = document.getElementById('pause-button');
 const highScoreElement = document.getElementById('high-score');
+const levelElement = document.getElementById('level');
 
 let touchStartX = 0;
 let touchStartY = 0;
@@ -456,30 +459,42 @@ for (let i = 0; i < OBSTACLE_POOL_SIZE; i++) {
 
 function spawnObstacle() {
     const inactiveObstacles = obstacles.filter(o => !o.visible);
-    if (inactiveObstacles.length < 2) return; // Not enough obstacles in the pool
+    const obstacleCount = playerState.level === 1 ? 1 : 2;
 
-    const lane1 = THREE.MathUtils.randInt(0, 2);
-    let lane2 = THREE.MathUtils.randInt(0, 2);
-    while (lane2 === lane1) {
-        lane2 = THREE.MathUtils.randInt(0, 2);
-    }
+    if (inactiveObstacles.length < obstacleCount) return;
 
-    const obstacle1 = inactiveObstacles[0];
-    const obstacle2 = inactiveObstacles[1];
-
-    obstacle1.position.x = lanes[lane1];
-    obstacle1.position.z = OBSTACLE_SPAWN_Z;
-    obstacle1.visible = true;
-    obstacle1.userData.z_speed = 0;
-
-    obstacle2.position.x = lanes[lane2];
-    obstacle2.position.z = OBSTACLE_SPAWN_Z;
-    obstacle2.visible = true;
-    // Make one of the two obstacles a moving one sometimes
-    if (Math.random() > 0.5) {
-        obstacle2.userData.z_speed = Math.random() * 0.1 - 0.05;
+    if (obstacleCount === 1) {
+        const lane = THREE.MathUtils.randInt(0, 2);
+        const obstacle = inactiveObstacles[0];
+        obstacle.position.x = lanes[lane];
+        obstacle.position.z = OBSTACLE_SPAWN_Z;
+        obstacle.visible = true;
+        obstacle.userData.z_speed = 0;
     } else {
-        obstacle2.userData.z_speed = 0;
+        const lane1 = THREE.MathUtils.randInt(0, 2);
+        let lane2 = THREE.MathUtils.randInt(0, 2);
+        while (lane2 === lane1) {
+            lane2 = THREE.MathUtils.randInt(0, 2);
+        }
+
+        const obstacle1 = inactiveObstacles[0];
+        const obstacle2 = inactiveObstacles[1];
+
+        obstacle1.position.x = lanes[lane1];
+        obstacle1.position.z = OBSTACLE_SPAWN_Z;
+        obstacle1.visible = true;
+        obstacle1.userData.z_speed = 0;
+
+        obstacle2.position.x = lanes[lane2];
+        obstacle2.position.z = OBSTACLE_SPAWN_Z;
+        obstacle2.visible = true;
+
+        // Make one of the two obstacles a moving one sometimes, more often at higher levels
+        if (Math.random() < playerState.level * 0.2) { 
+            obstacle2.userData.z_speed = Math.random() * 0.1 - 0.05;
+        } else {
+            obstacle2.userData.z_speed = 0;
+        }
     }
 }
 
@@ -512,6 +527,7 @@ function startGame() {
     Tone.Transport.start();
     startScreen.style.display = 'none';
     highScoreElement.textContent = `High Score: ${getHighScore()}`;
+    playerState.lastLevelUpTime = Date.now();
     spawnInitialItems();
     animate();
 }
@@ -528,6 +544,9 @@ function restartGame() {
     playerState.isFalling = false;
     player.rotation.x = 0;
     playerState.score = 0;
+    playerState.level = 1;
+    playerState.lastLevelUpTime = Date.now();
+    levelElement.textContent = `Level: 1`;
     playerState.shieldCount = 0;
     playerState.scoreMultiplier = 1.0;
     playerState.currentLaneIndex = 1;
@@ -684,8 +703,16 @@ function animate() {
         return;
     }
 
+    // Level Up Check
+    const timeSinceLevelUp = Date.now() - playerState.lastLevelUpTime;
+    if (timeSinceLevelUp > 120000) { // 2 minutes
+        playerState.level++;
+        levelElement.textContent = `Level: ${playerState.level}`;
+        playerState.lastLevelUpTime = Date.now();
+    }
+
     // Calculate speed
-    const autoSpeed = BASE_SPEED + (playerState.score / 50000);
+    const autoSpeed = BASE_SPEED + (playerState.level * 0.05);
     gameSpeed = autoSpeed * playerState.speedMultiplier;
 
     // Update Score
@@ -719,7 +746,8 @@ function animate() {
             if (obstacle.position.z > camera.position.z) {
                 obstacle.visible = false;
             }
-            if (obstacle.position.z > OBSTACLE_SPAWN_Z + 20) {
+            // Increase spawn distance to reduce density
+            if (obstacle.position.z > OBSTACLE_SPAWN_Z + 80) { 
                 shouldSpawnObstacle = false;
             }
         }
