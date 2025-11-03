@@ -282,7 +282,7 @@ function handleTouchEnd(event) {
         if (swipeDistanceY > 50) {
             slide();
         }
-    } else {
+    } else if (Math.abs(swipeDistanceX) > Math.abs(swipeDistanceY)) {
         // Horizontal swipe
         if (swipeDistanceX < -50) {
             moveLeft();
@@ -633,9 +633,12 @@ function restartGame() {
     shieldElement.textContent = 'Shawarma: 0';
 
     obstacles.forEach(o => o.visible = false);
+    trucks.forEach(t => t.visible = false);
     shawarma.visible = false;
     sachetWater.visible = false;
     energyDrink.visible = false;
+    speedBoost2x.visible = false;
+    speedBoost5x.visible = false;
 
     spawnInitialItems();
 
