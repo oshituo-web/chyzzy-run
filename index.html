@@ -11,14 +11,17 @@
     <canvas id="game-canvas"></canvas>
     <div id="powerup-notification"></div>
     <div id="hud">
+        <div id="score">Score: 0</div>
+        <div id="high-score">High Score: 0</div>
         <div id="level">Level: 1</div>
         <div id="shield-count">Shawarma: 0</div>
     </div>
+    <button id="pause-button">Pause</button>
     <div id="start-screen" class="overlay">
         <h1>Lagos Runner</h1>
         <button id="start-button">Start Game</button>
     </div>
-    <div id="game-over-screen">
+    <div id="game-over-screen" class="overlay">
         <h1>Game Over</h1>
         <p>Final Score: <span id="final-score">0</span></p>
         <button id="restart-button">Restart</button>
