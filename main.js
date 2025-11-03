@@ -64,6 +64,7 @@ const sfx = {
     powerup: () => new Tone.Synth().toDestination().triggerAttackRelease("E5", "8n"),
     collision: () => new Tone.Synth().toDestination().triggerAttackRelease("C3", "8n"),
     gameOver: () => new Tone.Synth().toDestination().triggerAttackRelease("C2", "1n"),
+    jump: () => new Tone.Synth().toDestination().triggerAttackRelease("A4", "16n"),
 };
 
 // =========== LIGHTING ===========
@@ -158,10 +159,12 @@ const playerState = {
     isAlive: true,
     isPaused: false,
     isJumping: false,
+    isFalling: false,
     yVelocity: 0,
 };
 
 const JUMP_POWER = 0.3;
+const HIGH_JUMP_POWER = 0.45;
 const GRAVITY = -0.015;
 
 const scoreElement = document.getElementById('score');
@@ -172,14 +175,11 @@ const gameOverScreen = document.getElementById('game-over-screen');
 const finalScoreElement = document.getElementById('final-score');
 const restartButton = document.getElementById('restart-button');
 const pauseButton = document.getElementById('pause-button');
-const leftButton = document.getElementById('left-button');
-const rightButton = document.getElementById('right-button');
-const jumpButton = document.getElementById('jump-button');
+const highScoreElement = document.getElementById('high-score');
 
 let touchStartX = 0;
-let touchEndX = 0;
 let touchStartY = 0;
-let touchEndY = 0;
+let lastTap = 0;
 
 function handleKeyPress(event) {
     if (playerState.isSwitching || !playerState.isAlive) return;
@@ -217,8 +217,17 @@ function moveRight() {
 
 function jump() {
     if (!playerState.isJumping && playerState.isAlive) {
+        sfx.jump();
         playerState.isJumping = true;
         playerState.yVelocity = JUMP_POWER;
+    }
+}
+
+function highJump() {
+    if (!playerState.isJumping && playerState.isAlive) {
+        sfx.jump();
+        playerState.isJumping = true;
+        playerState.yVelocity = HIGH_JUMP_POWER;
     }
 }
 
@@ -228,21 +237,25 @@ function handleTouchStart(event) {
 }
 
 function handleTouchEnd(event) {
-    touchEndX = event.changedTouches[0].screenX;
-    touchEndY = event.changedTouches[0].screenY;
-    handleSwipe();
-}
+    const touchEndX = event.changedTouches[0].screenX;
+    const touchEndY = event.changedTouches[0].screenY;
 
-function handleSwipe() {
     const swipeDistanceX = touchEndX - touchStartX;
     const swipeDistanceY = touchEndY - touchStartY;
 
-    if (Math.abs(swipeDistanceY) > Math.abs(swipeDistanceX)) {
-        // Vertical swipe
-        if (swipeDistanceY < -50) {
+    if (Math.abs(swipeDistanceX) < 10 && Math.abs(swipeDistanceY) < 10) {
+        // It's a tap
+        const currentTime = new Date().getTime();
+        const timeSinceLastTap = currentTime - lastTap;
+        if (timeSinceLastTap < 300 && timeSinceLastTap > 0) {
+            // Double tap
+            highJump();
+        } else {
+            // Single tap
             jump();
         }
-    } else {
+        lastTap = currentTime;
+    } else if (Math.abs(swipeDistanceX) > Math.abs(swipeDistanceY)) {
         // Horizontal swipe
         if (swipeDistanceX < -50) {
             moveLeft();
@@ -271,9 +284,6 @@ renderer.domElement.addEventListener('touchend', handleTouchEnd, false);
 startButton.addEventListener('click', startGame);
 restartButton.addEventListener('click', restartGame);
 pauseButton.addEventListener('click', togglePause);
-leftButton.addEventListener('touchstart', moveLeft, false);
-rightButton.addEventListener('touchstart', moveRight, false);
-jumpButton.addEventListener('touchstart', jump, false);
 
 // =========== BUILDING GENERATION ===========
 const BUILDING_POOL_SIZE = 30;
@@ -437,12 +447,25 @@ for (let i = 0; i < OBSTACLE_POOL_SIZE; i++) {
 }
 
 function spawnObstacle() {
-    const obstacle = obstacles.find(o => !o.visible);
-    if (obstacle) {
-        obstacle.position.x = lanes[THREE.MathUtils.randInt(0, 2)];
-        obstacle.position.z = OBSTACLE_SPAWN_Z;
-        obstacle.visible = true;
+    const inactiveObstacles = obstacles.filter(o => !o.visible);
+    if (inactiveObstacles.length < 2) return; // Not enough obstacles in the pool
+
+    const lane1 = THREE.MathUtils.randInt(0, 2);
+    let lane2 = THREE.MathUtils.randInt(0, 2);
+    while (lane2 === lane1) {
+        lane2 = THREE.MathUtils.randInt(0, 2);
     }
+
+    const obstacle1 = inactiveObstacles[0];
+    const obstacle2 = inactiveObstacles[1];
+
+    obstacle1.position.x = lanes[lane1];
+    obstacle1.position.z = OBSTACLE_SPAWN_Z;
+    obstacle1.visible = true;
+
+    obstacle2.position.x = lanes[lane2];
+    obstacle2.position.z = OBSTACLE_SPAWN_Z;
+    obstacle2.visible = true;
 }
 
 // Spawn initial items
@@ -453,6 +476,18 @@ function spawnInitialItems() {
     spawnEnergyDrink();
 }
 
+function getHighScore() {
+    return parseInt(localStorage.getItem('highScore') || '0');
+}
+
+function updateHighScore(score) {
+    const highScore = getHighScore();
+    if (score > highScore) {
+        localStorage.setItem('highScore', score);
+        highScoreElement.textContent = `High Score: ${score}`;
+    }
+}
+
 // =========== GAME START/OVER & RESTART ===========
 function startGame() {
     Tone.start();
@@ -461,20 +496,22 @@ function startGame() {
     }
     Tone.Transport.start();
     startScreen.style.display = 'none';
+    highScoreElement.textContent = `High Score: ${getHighScore()}`;
     spawnInitialItems();
     animate();
 }
 
 function gameOver() {
     playerState.isAlive = false;
+    playerState.isFalling = true;
     sfx.gameOver();
     Tone.Transport.stop();
-    finalScoreElement.textContent = Math.floor(playerState.score);
-    gameOverScreen.style.display = 'block';
 }
 
 function restartGame() {
     playerState.isAlive = true;
+    playerState.isFalling = false;
+    player.rotation.x = 0;
     playerState.score = 0;
     playerState.shieldCount = 0;
     playerState.scoreMultiplier = 1.0;
@@ -519,6 +556,15 @@ function checkCollisions() {
                     playerState.shieldCount--;
                     shieldElement.textContent = `Shawarma: ${playerState.shieldCount}`;
                     obstacle.visible = false; // Consume shield and ignore obstacle
+
+                    // Brief invincibility after shield use
+                    playerState.isInvincible = true;
+                    const originalColor = player.children[1].material.color.getHex();
+                    player.children[1].material.color.set(0x0000FF);
+                    setTimeout(() => {
+                        playerState.isInvincible = false;
+                        player.children[1].material.color.set(originalColor);
+                    }, 1000); // 1 second of invincibility
                 } else {
                     gameOver();
                 }
@@ -594,11 +640,26 @@ function checkCollisions() {
 
 // =========== GAME LOOP ===========
 function animate() {
-    if (!playerState.isAlive || playerState.isPaused) {
+    requestAnimationFrame(animate);
+
+    if (playerState.isFalling) {
+        if (player.rotation.x < Math.PI / 2) {
+            player.rotation.x += 0.1;
+            player.position.y -= 0.05;
+        } else {
+            playerState.isFalling = false;
+            const finalScore = Math.floor(playerState.score);
+            finalScoreElement.textContent = finalScore;
+            updateHighScore(finalScore);
+            gameOverScreen.style.display = 'block';
+        }
+        renderer.render(scene, camera);
         return;
     }
 
-    requestAnimationFrame(animate);
+    if (!playerState.isAlive || playerState.isPaused) {
+        return;
+    }
 
     // Calculate speed
     const autoSpeed = BASE_SPEED + (playerState.score / 50000);
@@ -711,10 +772,18 @@ function animate() {
     if (playerState.isJumping) {
         player.position.y += playerState.yVelocity;
         playerState.yVelocity += GRAVITY;
+
+        // Leg tuck animation
+        const tuck = 1 - (player.position.y - 0.5) / (JUMP_POWER / -GRAVITY);
+        player.children[4].scale.y = 1 - tuck * 0.5;
+        player.children[5].scale.y = 1 - tuck * 0.5;
+
         if (player.position.y <= 0.5) {
             player.position.y = 0.5;
             playerState.isJumping = false;
             playerState.yVelocity = 0;
+            player.children[4].scale.y = 1;
+            player.children[5].scale.y = 1;
         }
     }
 
