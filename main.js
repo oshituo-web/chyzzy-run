@@ -166,9 +166,6 @@ const playerState = {
     yVelocity: 0,
     level: 1,
     lastLevelUpTime: 0,
-    currentRoadIndex: 0,
-    nextJunctionScore: 10000,
-    atJunction: false,
 };
 
 const JUMP_POWER = 0.4;
@@ -186,9 +183,6 @@ const pauseButton = document.getElementById('pause-button');
 const highScoreElement = document.getElementById('high-score');
 const levelElement = document.getElementById('level');
 const powerupNotificationElement = document.getElementById('powerup-notification');
-const roadNameElement = document.getElementById('road-name');
-
-const roadNames = ["Third Mainland Bridge", "Lekki-Epe Expressway", "Ikorodu Road", "Agege Motor Road", "Ozumba Mbadiwe Avenue"];
 
 let touchStartX = 0;
 let touchStartY = 0;
@@ -210,9 +204,6 @@ function handleKeyPress(event) {
 
 function moveLeft() {
     if (playerState.isSwitching || !playerState.isAlive) return;
-    if (playerState.atJunction) {
-        switchRoad();
-    }
     let targetLaneIndex = Math.max(0, playerState.currentLaneIndex - 1);
     if (targetLaneIndex !== playerState.currentLaneIndex) {
         sfx.switch();
@@ -224,9 +215,6 @@ function moveLeft() {
 
 function moveRight() {
     if (playerState.isSwitching || !playerState.isAlive) return;
-    if (playerState.atJunction) {
-        switchRoad();
-    }
     let targetLaneIndex = Math.min(2, playerState.currentLaneIndex + 1);
     if (targetLaneIndex !== playerState.currentLaneIndex) {
         sfx.switch();
@@ -332,19 +320,12 @@ const BUILDING_MIN_HEIGHT = 10;
 const BUILDING_MAX_HEIGHT = 50;
 const BUILDING_SPACING = 5;
 
-const buildingColors = [
-    [0xFFC300, 0xFF5733, 0xC70039, 0x900C3F, 0x581845], // Theme 1
-    [0x1E8449, 0x2ECC71, 0x27AE60, 0x229954, 0x1D8348], // Theme 2 (Greens)
-    [0x2874A6, 0x3498DB, 0x5DADE2, 0x85C1E9, 0xAED6F1], // Theme 3 (Blues)
-    [0x6C3483, 0x8E44AD, 0xA569BD, 0xBB8FCE, 0xD7BDE2], // Theme 4 (Purples)
-    [0xB7950B, 0xD4AC0D, 0F1C40F, 0F39C12, 0xCA6F1E]  // Theme 5 (Browns/Oranges)
-];
-let currentBuildingColors = buildingColors[0];
+const buildingColors = [0xFFC300, 0xFF5733, 0xC70039, 0x900C3F, 0x581845];
 const buildingGeometry = new THREE.BoxGeometry(BUILDING_WIDTH, 1, BUILDING_DEPTH);
 
 function createBuilding(side, z) {
     const height = THREE.MathUtils.randInt(BUILDING_MIN_HEIGHT, BUILDING_MAX_HEIGHT);
-    const color = currentBuildingColors[THREE.MathUtils.randInt(0, currentBuildingColors.length - 1)];
+    const color = buildingColors[THREE.MathUtils.randInt(0, buildingColors.length - 1)];
     const material = new THREE.MeshStandardMaterial({ color });
 
     const building = new THREE.Mesh(buildingGeometry, material);
@@ -367,65 +348,6 @@ for (let i = 0; i < BUILDING_POOL_SIZE; i++) {
 }
 
 const allBuildings = [...leftBuildings, ...rightBuildings];
-
-// =========== JUNCTION GENERATION ===========
-const junctions = [];
-
-function createArrow() {
-    const arrow = new THREE.Group();
-    const head = new THREE.Mesh(
-        new THREE.ConeGeometry(2, 4, 4),
-        new THREE.MeshStandardMaterial({ color: 0x00FF00 })
-    );
-    head.rotation.z = Math.PI / 2;
-    arrow.add(head);
-
-    const shaft = new THREE.Mesh(
-        new THREE.BoxGeometry(4, 1, 1),
-        new THREE.MeshStandardMaterial({ color: 0x00FF00 })
-    );
-    shaft.position.x = -3;
-    arrow.add(shaft);
-
-    arrow.visible = false;
-    scene.add(arrow);
-    return arrow;
-}
-
-for (let i = 0; i < 2; i++) { // Only need 2 arrows for a junction
-    junctions.push(createArrow());
-}
-
-function spawnJunction() {
-    playerState.atJunction = true;
-    const arrowLeft = junctions[0];
-    const arrowRight = junctions[1];
-
-    arrowLeft.position.set(-LANE_WIDTH - 5, 3, OBSTACLE_SPAWN_Z + 50);
-    arrowLeft.rotation.y = 0;
-    arrowLeft.visible = true;
-
-    arrowRight.position.set(LANE_WIDTH + 5, 3, OBSTACLE_SPAWN_Z + 50);
-    arrowRight.rotation.y = Math.PI;
-    arrowRight.visible = true;
-
-    playerState.nextJunctionScore += 10000; // Set score for next junction
-}
-
-function switchRoad() {
-    playerState.atJunction = false;
-    junctions.forEach(j => j.visible = false);
-
-    playerState.currentRoadIndex = (playerState.currentRoadIndex + 1) % roadNames.length;
-    roadNameElement.textContent = roadNames[playerState.currentRoadIndex];
-    currentBuildingColors = buildingColors[playerState.currentRoadIndex];
-
-    // Refresh building colors
-    allBuildings.forEach(building => {
-        const color = currentBuildingColors[THREE.MathUtils.randInt(0, currentBuildingColors.length - 1)];
-        building.material.color.set(color);
-    });
-}
 
 // =========== POWER-UP GENERATION ===========
 const shawarmaGeometry = new THREE.TorusGeometry(0.8, 0.3, 16, 100);
@@ -682,7 +604,6 @@ function startGame() {
     startScreen.style.display = 'none';
     highScoreElement.textContent = `High Score: ${getHighScore()}`;
     playerState.lastLevelUpTime = Date.now();
-    roadNameElement.textContent = roadNames[playerState.currentRoadIndex];
     spawnInitialItems();
     animate();
 }
@@ -702,10 +623,6 @@ function restartGame() {
     playerState.level = 1;
     playerState.lastLevelUpTime = Date.now();
     levelElement.textContent = `Level: 1`;
-    playerState.currentRoadIndex = 0;
-    roadNameElement.textContent = roadNames[playerState.currentRoadIndex];
-    playerState.nextJunctionScore = 10000;
-    playerState.atJunction = false;
     playerState.shieldCount = 0;
     playerState.scoreMultiplier = 1.0;
     playerState.currentLaneIndex = 1;
@@ -937,21 +854,6 @@ function animate() {
     if (shouldSpawnObstacle) {
         spawnObstacle();
     }
-
-    // Animate Junctions
-    if (playerState.score > playerState.nextJunctionScore && !playerState.atJunction) {
-        spawnJunction();
-    }
-
-    junctions.forEach(junction => {
-        if (junction.visible) {
-            junction.position.z += gameSpeed;
-            if (junction.position.z > camera.position.z) {
-                junction.visible = false;
-                playerState.atJunction = false; // Missed the junction
-            }
-        }
-    });
 
     // Animate Power-ups
     if (shawarma.visible) {
